@@ -759,11 +759,20 @@ fn type_def_header_parts(
     kind_name: &str,
 ) -> (String, String) {
     const FIELD_MARKER: &str = "__anchor_private_fields__";
+    // `IdlTypeDefTy` names the payload after the kind: a struct carries
+    // `fields`, an enum carries `variants`. `build_enum_type_strings` already
+    // makes this distinction; this path hardcoded `fields`, so every enum type
+    // def failed to deserialize with `missing field variants`.
+    let payload_key = if kind_name == "enum" {
+        "variants"
+    } else {
+        "fields"
+    };
     let mut type_def_obj = build_type_def_header(name, docs, kind, generics);
-    type_def_obj.insert(
-        "type".into(),
-        json!({ "kind": kind_name, "fields": [FIELD_MARKER] }),
-    );
+    let mut type_obj = serde_json::Map::new();
+    type_obj.insert("kind".into(), Value::String(kind_name.to_owned()));
+    type_obj.insert(payload_key.into(), json!([FIELD_MARKER]));
+    type_def_obj.insert("type".into(), Value::Object(type_obj));
     let header = Value::Object(type_def_obj).to_string();
     let marker = Value::String(FIELD_MARKER.to_owned()).to_string();
     let (prefix, suffix) = header
