@@ -183,23 +183,36 @@ pub fn check_idl_build_feature() -> Result<()> {
     let (lang_crate, spl_crate) =
         anchor_crate_names(&manifest).unwrap_or(("anchor-lang", "anchor-spl"));
 
+    // v2 wires IDL emission differently than v1: the `anchor-derive-accounts-v2`
+    // macro emissions are gated on the *user crate's own* `idl-build` feature, so
+    // v2 programs declare a standalone `idl-build = []` and forward nothing (see
+    // the generated manifest in `rust_template.rs` and `tests-v2/programs/*`).
+    // `anchor-spl-v2` doesn't even define an `idl-build` feature, so suggesting
+    // `anchor-spl-v2/idl-build` would turn a working build into a cargo error.
+    let is_v2 = lang_crate == "anchor-lang-v2";
+
     // Check whether the manifest has `idl-build` feature
     let has_idl_build_feature = manifest
         .features
         .iter()
         .any(|(feature, _)| feature == "idl-build");
     if !has_idl_build_feature {
-        let anchor_spl_idl_build = if manifest.dependencies.contains_key(spl_crate) {
-            format!(r#", "{spl_crate}/idl-build""#)
-        } else {
+        let feature_list = if is_v2 {
             String::new()
+        } else {
+            let anchor_spl_idl_build = if manifest.dependencies.contains_key(spl_crate) {
+                format!(r#", "{spl_crate}/idl-build""#)
+            } else {
+                String::new()
+            };
+            format!(r#""{lang_crate}/idl-build"{anchor_spl_idl_build}"#)
         };
 
         return Err(anyhow!(
             r#"`idl-build` feature is missing. To solve, add
 
 [features]
-idl-build = ["{lang_crate}/idl-build"{anchor_spl_idl_build}]
+idl-build = [{feature_list}]
 
 in `{manifest_path:?}`."#
         ));
@@ -220,10 +233,11 @@ in `{manifest_path:?}`."#
         });
 
     // Check that the SPL crate's `idl-build` feature is in the feature list.
+    // v1 only — `anchor-spl-v2` has no `idl-build` feature to forward.
     let spl_feature = format!("{spl_crate}/idl-build");
-    manifest
-        .dependencies
-        .get(spl_crate)
+    (!is_v2)
+        .then(|| manifest.dependencies.get(spl_crate))
+        .flatten()
         .and_then(|_| manifest.features.get("idl-build"))
         .map(|feature_list| !feature_list.contains(&spl_feature))
         .unwrap_or_default()
